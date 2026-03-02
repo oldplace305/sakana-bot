@@ -64,12 +64,18 @@ NOON_REPORT_PROMPT = """
 ## Venture状況
 {venture_summary}
 
+## X投稿状況
+{x_stats}
+
 ## 出力構成（自然な日本語で、合計300文字程度）
 ```
 ━━━ Lex Daily Report — Noon ━━━
 
 🔨 Venture進捗
 [承認済み・構築中のVentureがあれば進捗を報告。なければ「待機中」]
+
+📱 X投稿状況
+[X投稿統計データを反映]
 
 📈 数字
   稼働中Venture: N | 構築中: N | 累計PV: N
@@ -177,6 +183,16 @@ class DailyReport(commands.Cog):
             logger.warning(f"Ventureサマリー取得エラー: {e}")
         return "Ventureデータなし（Ventures Cogが未ロード）"
 
+    def _get_x_stats(self) -> str:
+        """XPosterCogから投稿統計を取得。"""
+        try:
+            x_cog = self.bot.get_cog("XPoster")
+            if x_cog:
+                return x_cog.format_stats_for_report()
+        except Exception as e:
+            logger.warning(f"X統計取得エラー: {e}")
+        return "X投稿データなし（XPoster Cogが未ロード）"
+
     async def _generate_report(self, report_type: str) -> str:
         """Claude CLIを使ってレポートを生成。
 
@@ -186,9 +202,10 @@ class DailyReport(commands.Cog):
         Returns:
             str: レポートテキスト
         """
-        # リサーチデータとVentureサマリーを取得
+        # リサーチデータ、Ventureサマリー、X統計を取得
         research_data = self._get_research_data()
         venture_summary = self._get_venture_summary()
+        x_stats = self._get_x_stats()
 
         # プロンプトにデータを埋め込む
         prompts = {
@@ -201,6 +218,8 @@ class DailyReport(commands.Cog):
             "{research_data}", research_data
         ).replace(
             "{venture_summary}", venture_summary
+        ).replace(
+            "{x_stats}", x_stats
         )
 
         system_prompt = self.profile.get_system_context()

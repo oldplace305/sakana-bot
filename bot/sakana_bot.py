@@ -41,6 +41,7 @@ class LexBot(commands.Bot):
             "bot.cogs.script_ops",
             "bot.cogs.research",
             "bot.cogs.ventures",
+            "bot.cogs.x_poster",
             "bot.cogs.daily_report",
             "bot.cogs.business",
             "bot.cogs.backup",

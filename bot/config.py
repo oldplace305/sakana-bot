@@ -24,5 +24,11 @@ REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID", "0"))
 REPAIR_BUDGET_PER_DAY = float(os.getenv("REPAIR_BUDGET_PER_DAY", "1.0"))
 REPAIR_BUDGET_PER_ATTEMPT = float(os.getenv("REPAIR_BUDGET_PER_ATTEMPT", "0.5"))
 
+# X (Twitter) API設定（Free tier: 月500投稿）
+X_API_KEY = os.getenv("X_API_KEY", "")
+X_API_SECRET = os.getenv("X_API_SECRET", "")
+X_ACCESS_TOKEN = os.getenv("X_ACCESS_TOKEN", "")
+X_ACCESS_SECRET = os.getenv("X_ACCESS_SECRET", "")
+
 # ログ設定
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
