@@ -23,6 +23,7 @@ TIMEOUT_PROFILES = {
     "normal":  {"timeout": 120, "max_turns": 5},
     "complex": {"timeout": 300, "max_turns": 15},
     "repair":  {"timeout": 600, "max_turns": 25},
+    "venture": {"timeout": 900, "max_turns": 30},
 }
 
 # --- 複雑度自動判定パターン ---

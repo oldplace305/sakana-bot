@@ -39,6 +39,8 @@ class LexBot(commands.Bot):
             "bot.cogs.claude_bridge",
             "bot.cogs.owner",
             "bot.cogs.script_ops",
+            "bot.cogs.research",
+            "bot.cogs.ventures",
             "bot.cogs.daily_report",
             "bot.cogs.business",
             "bot.cogs.backup",
