@@ -1,5 +1,5 @@
 """リサーチCog - 英語圏トレンドを自動収集・分析。
-毎朝8:30にデータ収集→Claude CLIで分析→日報に統合される。
+1日3回（8:30, 11:30, 17:30）にデータ収集→Claude CLIで分析→日報に統合される。
 """
 import discord
 from discord.ext import commands, tasks
@@ -17,9 +17,13 @@ logger = logging.getLogger(__name__)
 # 日本時間
 JST = timezone(timedelta(hours=9))
 
-# リサーチ実行時刻（日報の30分前に収集完了させる）
-RESEARCH_HOUR = 8
-RESEARCH_MINUTE = 30
+# リサーチ実行時刻（各日報の30分前に収集完了させる）
+# 朝日報9:00 → 8:30, 昼日報12:00 → 11:30, 夕日報18:00 → 17:30
+RESEARCH_TIMES = [
+    (8, 30),   # 朝リサーチ
+    (11, 30),  # 昼リサーチ
+    (17, 30),  # 夕リサーチ
+]
 
 # 分析プロンプト
 ANALYSIS_PROMPT = """
@@ -88,9 +92,12 @@ class Research(commands.Cog):
     async def research_loop(self):
         """毎分チェックし、リサーチ時刻になったら実行。"""
         now = datetime.now(JST)
-        if now.hour == RESEARCH_HOUR and now.minute == RESEARCH_MINUTE:
-            logger.info("🔍 定期リサーチ開始")
-            await self.run_research()
+        for hour, minute in RESEARCH_TIMES:
+            if now.hour == hour and now.minute == minute:
+                label = {8: "朝", 11: "昼", 17: "夕"}[hour]
+                logger.info(f"🔍 {label}リサーチ開始")
+                await self.run_research()
+                break
 
     @research_loop.before_loop
     async def before_research(self):
