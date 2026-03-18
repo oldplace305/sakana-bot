@@ -16,6 +16,7 @@ from bot.config import OWNER_ID, REPORT_CHANNEL_ID, API_HOST, API_PORT, API_TOKE
 from bot.services.apple_notes import AppleNotesService
 from bot.services.claude_cli import ClaudeCLIBridge
 from bot.services.voice_processor import VoiceProcessor
+from bot.services.whisper_transcriber import WhisperTranscriber
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ class ApiServer(commands.Cog):
             notes_service=self.notes_service,
             notify_func=self._send_to_owner,
         )
+        self.whisper = WhisperTranscriber()
         self.runner = None
         self._setup_app()
 
@@ -237,51 +239,118 @@ class ApiServer(commands.Cog):
 
 
     async def handle_voice(self, request: web.Request) -> web.Response:
-        """POST /voice — 音声テキストを自動処理。
+        """POST /voice — 音声テキストまたは音声ファイルを自動処理。
 
-        Siriで文字起こしされたテキストを受け取り、Claude CLIで
-        意図判定・リライトを行い、結果に応じてApple Notes保存やDiscord通知を実行。
-
-        body: { "text": "ポスト 2026年の調剤報酬改定..." }
+        2つのモードに対応:
+        1. JSON: { "text": "ポスト ..." } → テキストを直接処理
+        2. multipart/form-data: audio=<音声ファイル> → Whisperで文字起こし → 処理
 
         処理はバックグラウンドで実行し、即座にレスポンスを返す。
         結果はDiscord通知で報告。
         """
-        try:
-            body = await request.json()
-        except Exception:
-            return self._json_response(
-                {"status": "error", "error": "JSONパースエラー"}, 400
-            )
+        content_type = request.content_type or ""
 
-        text = body.get("text", "").strip()
-        if not text:
-            return self._json_response(
-                {"status": "error", "error": "text は必須です"}, 400
-            )
-
-        logger.info(f"🎤 /voice リクエスト受信: {text[:80]}...")
-
-        # 受信通知をDiscordに送信
-        async def _process_voice():
+        # --- モード1: JSON（テキスト直接送信） ---
+        if "json" in content_type:
             try:
-                await self._send_to_owner(
-                    f"🎤 音声入力を受信しました\n> {text[:150]}"
-                    f"{'...' if len(text) > 150 else ''}\n"
-                    f"⏳ 処理中..."
+                body = await request.json()
+            except Exception:
+                return self._json_response(
+                    {"status": "error", "error": "JSONパースエラー"}, 400
                 )
-                await self.voice_processor.process(text)
+            text = body.get("text", "").strip()
+            if not text:
+                return self._json_response(
+                    {"status": "error", "error": "text は必須です"}, 400
+                )
+            logger.info(f"🎤 /voice テキスト受信: {text[:80]}...")
+            self.bot.loop.create_task(self._process_voice_text(text))
+            return self._json_response({
+                "status": "ok",
+                "message": "音声処理を開始しました。結果はDiscordで通知します。",
+            })
+
+        # --- モード2: multipart（音声ファイル送信） ---
+        if "multipart" in content_type:
+            try:
+                reader = await request.multipart()
+                audio_data = None
+                filename = "audio.m4a"
+
+                async for part in reader:
+                    if part.name == "audio":
+                        filename = part.filename or filename
+                        audio_data = await part.read()
+                        break
+
+                if not audio_data:
+                    return self._json_response(
+                        {"status": "error", "error": "audio フィールドが必要です"}, 400
+                    )
+
+                size_mb = len(audio_data) / (1024 * 1024)
+                logger.info(f"🎤 /voice 音声ファイル受信: {filename} ({size_mb:.1f}MB)")
+
+                self.bot.loop.create_task(
+                    self._process_voice_audio(audio_data, filename)
+                )
+                return self._json_response({
+                    "status": "ok",
+                    "message": "音声ファイルを受信しました。文字起こし→処理を開始します。",
+                })
+
             except Exception as e:
-                logger.error(f"音声処理エラー: {e}", exc_info=True)
-                await self._send_to_owner(f"⚠️ 音声処理エラー: {e}")
+                logger.error(f"multipart解析エラー: {e}", exc_info=True)
+                return self._json_response(
+                    {"status": "error", "error": f"ファイル受信エラー: {e}"}, 400
+                )
 
-        # バックグラウンドで処理（即レスポンス返す）
-        self.bot.loop.create_task(_process_voice())
+        return self._json_response(
+            {"status": "error", "error": "Content-Type は application/json または multipart/form-data にしてください"}, 400
+        )
 
-        return self._json_response({
-            "status": "ok",
-            "message": "音声処理を開始しました。結果はDiscordで通知します。",
-        })
+    async def _process_voice_text(self, text: str):
+        """テキストモードの音声処理（バックグラウンド）。"""
+        try:
+            await self._send_to_owner(
+                f"🎤 音声入力を受信しました\n> {text[:150]}"
+                f"{'...' if len(text) > 150 else ''}\n"
+                f"⏳ 処理中..."
+            )
+            await self.voice_processor.process(text)
+        except Exception as e:
+            logger.error(f"音声処理エラー: {e}", exc_info=True)
+            await self._send_to_owner(f"⚠️ 音声処理エラー: {e}")
+
+    async def _process_voice_audio(self, audio_data: bytes, filename: str):
+        """音声ファイルモードの処理（バックグラウンド）。"""
+        try:
+            await self._send_to_owner("🎤 音声ファイルを受信しました\n⏳ 文字起こし中...")
+
+            # Whisperで文字起こし
+            transcribe_result = await self.whisper.transcribe(audio_data, filename)
+
+            if not transcribe_result["success"]:
+                await self._send_to_owner(
+                    f"⚠️ 文字起こし失敗: {transcribe_result['error']}"
+                )
+                return
+
+            text = transcribe_result["text"]
+            logger.info(f"Whisper文字起こし結果: {text[:100]}...")
+
+            await self._send_to_owner(
+                f"📝 文字起こし完了\n> {text[:200]}"
+                f"{'...' if len(text) > 200 else ''}\n"
+                f"⏳ リライト処理中..."
+            )
+
+            # Claude CLIで処理
+            await self.voice_processor.process(text)
+
+        except Exception as e:
+            logger.error(f"音声ファイル処理エラー: {e}", exc_info=True)
+            await self._send_to_owner(f"⚠️ 音声処理エラー: {e}")
 
 
 async def setup(bot: commands.Bot):
